@@ -1,0 +1,33 @@
+{
+  "name": "@byteland/gemini-cc",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Use Gemini from Claude Code to review code or delegate tasks.",
+  "homepage": "https://github.com/ByteLandTechnology/gemini-cc#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ByteLandTechnology/gemini-cc.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ByteLandTechnology/gemini-cc/issues"
+  },
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.mjs",
+    "verify": "npm test && npm run build && npm run release:check",
+    "check": "npm run verify",
+    "validate:claude": "claude plugin validate .",
+    "release:check": "node scripts/release-check.mjs",
+    "release:bundle": "node scripts/release-bundle.mjs",
+    "release:full": "npm run verify && npm run validate:claude && npm run release:bundle"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^6.0.2"
+  }
+}

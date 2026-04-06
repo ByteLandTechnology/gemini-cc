@@ -1,0 +1,11 @@
+{
+  "name": "gemini",
+  "version": "1.0.0",
+  "description": "Use Gemini from Claude Code to review code or delegate tasks.",
+  "license": "Apache-2.0",
+  "author": {
+    "name": "ByteLand Technology Limited"
+  },
+  "homepage": "https://github.com/ByteLandTechnology/gemini-cc#readme",
+  "repository": "https://github.com/ByteLandTechnology/gemini-cc"
+}

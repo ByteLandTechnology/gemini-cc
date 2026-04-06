@@ -1,0 +1,27 @@
+{
+  "name": "gemini-cc",
+  "metadata": {
+    "description": "Gemini-backed Claude Code plugin marketplace.",
+    "version": "1.0.0"
+  },
+  "owner": {
+    "name": "ByteLand Technology Limited"
+  },
+  "plugins": [
+    {
+      "name": "gemini",
+      "source": "./plugins/gemini",
+      "version": "1.0.0",
+      "description": "Use Gemini from Claude Code to review code or delegate tasks.",
+      "license": "Apache-2.0",
+      "author": {
+        "name": "ByteLand Technology Limited"
+      },
+      "homepage": "https://github.com/ByteLandTechnology/gemini-cc#readme",
+      "repository": "https://github.com/ByteLandTechnology/gemini-cc",
+      "keywords": ["gemini", "claude-code", "plugin", "review", "delegation"],
+      "category": "development",
+      "tags": ["gemini", "review", "background-jobs"]
+    }
+  ]
+}
