@@ -91,7 +91,7 @@ function printUsage() {
   console.log(
     [
       "Usage:",
-      "  node scripts/gemini-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
+      "  node scripts/gemini-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--set-model <model>] [--json]",
       "  node scripts/gemini-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/gemini-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
       "  node scripts/gemini-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
@@ -236,6 +236,7 @@ function buildSetupReport(cwd, actionsTaken = []) {
     auth: authStatus,
     sessionRuntime: getSessionRuntimeStatus(),
     reviewGateEnabled: Boolean(config.stopReviewGate),
+    defaultModel: config.defaultModel ?? null,
     actionsTaken,
     nextSteps,
   };
@@ -243,7 +244,7 @@ function buildSetupReport(cwd, actionsTaken = []) {
 
 function handleSetup(argv) {
   const { options } = parseCommandInput(argv, {
-    valueOptions: ["cwd"],
+    valueOptions: ["cwd", "set-model"],
     booleanOptions: ["json", "enable-review-gate", "disable-review-gate"],
   });
 
@@ -267,6 +268,20 @@ function handleSetup(argv) {
     actionsTaken.push(
       `Disabled the stop-time review gate for ${workspaceRoot}.`,
     );
+  }
+
+  if ("set-model" in options) {
+    const modelValue = String(options["set-model"] ?? "").trim();
+    if (modelValue === "") {
+      setConfig(workspaceRoot, "defaultModel", null);
+      actionsTaken.push(`Cleared default model for ${workspaceRoot}.`);
+    } else {
+      const normalizedModel = normalizeRequestedModel(modelValue);
+      setConfig(workspaceRoot, "defaultModel", normalizedModel);
+      actionsTaken.push(
+        `Set default model to \`${normalizedModel}\` for ${workspaceRoot}.`,
+      );
+    }
   }
 
   const finalReport = buildSetupReport(cwd, actionsTaken);

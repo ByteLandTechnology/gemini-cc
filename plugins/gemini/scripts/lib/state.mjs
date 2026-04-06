@@ -29,6 +29,7 @@ function defaultState() {
     version: STATE_VERSION,
     config: {
       stopReviewGate: false,
+      defaultModel: null,
     },
     jobs: [],
   };

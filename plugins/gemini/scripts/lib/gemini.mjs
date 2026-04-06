@@ -9,6 +9,7 @@ import { readJsonFile } from "./fs.mjs";
 import { collectReviewContext } from "./git.mjs";
 import { loadBrokerSession } from "./broker-lifecycle.mjs";
 import { binaryAvailable } from "./process.mjs";
+import { getConfig } from "./state.mjs";
 
 const DEFAULT_PROVIDER_ID = "gemini";
 const DEFAULT_PROVIDER_NAME = "Gemini";
@@ -31,7 +32,7 @@ const GEMINI_AUTH_CACHE_FILES = [
   path.join(os.homedir(), ".gemini", "credentials.json"),
 ];
 
-function getProviderConfig(env = process.env) {
+function getProviderConfig(env = process.env, cwd = null) {
   const providerId =
     String(env.GEMINI_COMPANION_PROVIDER_ID ?? DEFAULT_PROVIDER_ID)
       .trim()
@@ -56,7 +57,19 @@ function getProviderConfig(env = process.env) {
   const configuredDefaultModel = String(
     env.GEMINI_COMPANION_DEFAULT_MODEL ?? DEFAULT_PROVIDER_MODEL,
   ).trim();
-  const defaultModel = configuredDefaultModel || null;
+  const envDefaultModel = configuredDefaultModel || null;
+
+  let configDefaultModel = null;
+  if (cwd) {
+    try {
+      const stateConfig = getConfig(cwd);
+      configDefaultModel = stateConfig?.defaultModel ?? null;
+    } catch {
+      configDefaultModel = null;
+    }
+  }
+
+  const defaultModel = envDefaultModel ?? configDefaultModel ?? null;
 
   return {
     providerId,
@@ -163,7 +176,7 @@ function buildApprovalArgs({ write = false } = {}) {
 }
 
 function buildGeminiArgs(options = {}) {
-  const provider = getProviderConfig(options.env);
+  const provider = getProviderConfig(options.env, options.cwd);
   const args = ["--output-format", "stream-json"];
 
   const selectedModel = options.model ?? provider.defaultModel;
@@ -377,6 +390,7 @@ async function runGeminiCli(cwd, options = {}) {
 
   const args = buildGeminiArgs({
     env: options.env,
+    cwd,
     model: options.model,
     resumeSessionId: options.resumeSessionId,
     write: options.write,
@@ -733,6 +747,7 @@ export async function runAppServerReview(cwd, options = {}) {
   const context = collectReviewContext(cwd, target);
   const result = await runGeminiCli(context.repoRoot, {
     env: options.env,
+    cwd: context.repoRoot,
     model: options.model,
     prompt: buildReviewPrompt(context),
     write: false,
@@ -782,6 +797,7 @@ export async function runAppServerTurn(cwd, options = {}) {
   );
   const result = await runGeminiCli(cwd, {
     env: options.env,
+    cwd,
     model: options.model,
     resumeSessionId: options.resumeThreadId,
     prompt: executionPrompt,

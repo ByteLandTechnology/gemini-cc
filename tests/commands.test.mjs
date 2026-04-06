@@ -355,11 +355,14 @@ test("setup command can offer Gemini install and points users to Gemini auth", (
 
   assert.match(
     setup,
-    /argument-hint:\s*'\[--enable-review-gate\|--disable-review-gate\]'/,
+    /argument-hint:\s*'\[--enable-review-gate\|--disable-review-gate\] \[--set-model <model>\]'/,
   );
   assert.match(setup, /AskUserQuestion/);
   assert.match(setup, /npm install -g @google\/gemini-cli/);
-  assert.match(setup, /gemini-companion\.mjs" setup --json \$ARGUMENTS/);
+  assert.match(setup, /gemini-companion\.mjs" setup --json/);
+  assert.match(setup, /gemini-3\.1-pro-preview/);
+  assert.match(setup, /Custom model/);
+  assert.match(setup, /Auto/);
   assert.match(readme, /gemini/);
   assert.match(readme, /offer to install Gemini for you/i);
   assert.match(readme, /\/gemini:setup --enable-review-gate/);
