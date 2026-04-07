@@ -1,5 +1,7 @@
 # Gemini-backed plugin for Claude Code
 
+![gemini-cc plugin logo](./logo.svg)
+
 Use Gemini from inside Claude Code for code reviews or to delegate tasks without leaving your existing `/gemini:*` workflow.
 
 This plugin is for Claude Code users who want Gemini to be both the provider and the visible command surface inside Claude Code.
