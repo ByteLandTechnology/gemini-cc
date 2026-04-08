@@ -168,6 +168,25 @@ function emitProgress(onProgress, message, phase = null, extra = {}) {
   onProgress({ message, phase, ...extra });
 }
 
+function logAssistantMessage(onProgress, text) {
+  if (!onProgress || !text) {
+    return;
+  }
+  onProgress({
+    message: "",
+    logTitle: "Assistant message",
+    logBody: text,
+  });
+}
+
+function emitStreamText(onStreamText, text) {
+  if (!onStreamText || !text) {
+    return false;
+  }
+  onStreamText(text);
+  return true;
+}
+
 function buildApprovalArgs({ write = false } = {}) {
   if (write) {
     return ["--approval-mode", "yolo", "--sandbox"];
@@ -417,6 +436,7 @@ async function runGeminiCli(cwd, options = {}) {
       touchedFiles: new Set(),
       commandExecutions: [],
       rawEvents: [],
+      streamedOutput: false,
       settled: false,
     };
 
@@ -436,6 +456,7 @@ async function runGeminiCli(cwd, options = {}) {
         stderr: cleanProviderStderr(state.stderr),
         touchedFiles: [...state.touchedFiles],
         commandExecutions: state.commandExecutions,
+        streamedOutput: state.streamedOutput,
       });
     };
 
@@ -462,7 +483,12 @@ async function runGeminiCli(cwd, options = {}) {
       try {
         event = JSON.parse(line);
       } catch {
-        state.finalMessage = `${state.finalMessage}${state.finalMessage ? "\n" : ""}${line}`;
+        const nextLine = `${state.finalMessage ? "\n" : ""}${line}`;
+        state.finalMessage = `${state.finalMessage}${nextLine}`;
+        logAssistantMessage(options.onProgress, nextLine);
+        state.streamedOutput =
+          emitStreamText(options.onStreamText, nextLine) ||
+          state.streamedOutput;
         return;
       }
 
@@ -557,6 +583,9 @@ async function runGeminiCli(cwd, options = {}) {
           return;
         }
         state.finalMessage = `${state.finalMessage}${text}`;
+        logAssistantMessage(options.onProgress, text);
+        state.streamedOutput =
+          emitStreamText(options.onStreamText, text) || state.streamedOutput;
         return;
       }
 
@@ -579,6 +608,12 @@ async function runGeminiCli(cwd, options = {}) {
         const response = extractResultText(event).trim();
         if (response) {
           state.finalMessage = response;
+          if (!state.streamedOutput) {
+            state.streamedOutput = emitStreamText(
+              options.onStreamText,
+              response,
+            );
+          }
         }
         state.turnId = event.turnId ?? event.turn_id ?? state.turnId;
         state.sessionId =
@@ -752,6 +787,7 @@ export async function runAppServerReview(cwd, options = {}) {
     prompt: buildReviewPrompt(context),
     write: false,
     onProgress: options.onProgress,
+    onStreamText: options.onStreamText,
   });
 
   return {
@@ -765,6 +801,7 @@ export async function runAppServerReview(cwd, options = {}) {
     turn: null,
     error: result.error,
     stderr: result.stderr,
+    streamedOutput: result.streamedOutput,
   };
 }
 
@@ -803,6 +840,7 @@ export async function runAppServerTurn(cwd, options = {}) {
     prompt: executionPrompt,
     write: options.sandbox === "workspace-write",
     onProgress: options.onProgress,
+    onStreamText: options.onStreamText,
   });
 
   return {
@@ -818,6 +856,7 @@ export async function runAppServerTurn(cwd, options = {}) {
     fileChanges: [],
     touchedFiles: result.touchedFiles,
     commandExecutions: result.commandExecutions,
+    streamedOutput: result.streamedOutput,
   };
 }
 

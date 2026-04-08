@@ -1,6 +1,6 @@
 ---
 description: Run a Gemini-backed review that challenges the implementation approach and design choices
-argument-hint: "[--wait|--background] [--base <ref>] [--scope auto|working-tree|branch] [focus ...]"
+argument-hint: "[--wait|--background] [--stream] [--base <ref>] [--scope auto|working-tree|branch] [focus ...]"
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion
 ---
@@ -21,6 +21,8 @@ Core constraint:
 
 Execution mode rules:
 
+- If the raw arguments include both `--background` and `--stream`, stop and tell the user to choose one.
+- If the raw arguments include `--stream`, do not ask. Run in the foreground.
 - If the raw arguments include `--wait`, do not ask. Run in the foreground.
 - If the raw arguments include `--background`, do not ask. Run in a Claude background task.
 - Otherwise, estimate the review size before asking:
@@ -40,8 +42,11 @@ Argument handling:
 
 - Preserve the user's arguments exactly.
 - Do not strip `--wait` or `--background` yourself.
+- Preserve `--stream` exactly when the user passes it.
 - Do not weaken the adversarial framing or rewrite the user's focus text.
 - The companion script parses `--wait` and `--background`, but Claude Code's `Bash(..., run_in_background: true)` is what actually detaches the run.
+- `--stream` forces foreground execution and conflicts with `--background`.
+- In stream mode, the review prints raw Gemini text incrementally instead of waiting for the final rendered report.
 - `/gemini:adversarial-review` uses the same review target selection as `/gemini:review`.
 - It supports working-tree review, branch review, and `--base <ref>`.
 - It does not support `--scope staged` or `--scope unstaged`.

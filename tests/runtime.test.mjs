@@ -40,6 +40,40 @@ async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 50 } = {}) {
   throw new Error("Timed out waiting for condition.");
 }
 
+async function runStreaming(command, args, options = {}) {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      shell: false,
+      windowsHide: true,
+    });
+    let stdout = "";
+    let stderr = "";
+    let firstStdoutAt = null;
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      firstStdoutAt ??= Date.now();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      resolve({
+        status: code,
+        signal,
+        stdout,
+        stderr,
+        firstStdoutAt,
+        closedAt: Date.now(),
+      });
+    });
+  });
+}
+
 test("setup reports ready when fake Gemini is installed and authenticated", () => {
   const binDir = makeTempDir();
   installFakeGemini(binDir);
@@ -103,6 +137,36 @@ test("review renders a no-findings result from app-server review/start", () => {
   assert.equal(result.status, 0);
   assert.match(result.stdout, /Reviewed uncommitted changes/);
   assert.match(result.stdout, /No material issues found/);
+});
+
+test("review --stream emits raw review text before the process exits", async () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeGemini(binDir, "slow-stream");
+  initGitRepo(repo);
+  fs.mkdirSync(path.join(repo, "src"));
+  fs.writeFileSync(
+    path.join(repo, "src", "app.js"),
+    "export const value = 1;\n",
+  );
+  run("git", ["add", "src/app.js"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+  fs.writeFileSync(
+    path.join(repo, "src", "app.js"),
+    "export const value = 2;\n",
+  );
+
+  const result = await runStreaming("node", [SCRIPT, "review", "--stream"], {
+    cwd: repo,
+    env: buildEnv(binDir),
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Reviewed uncommitted changes\./);
+  assert.match(result.stdout, /No material issues found\./);
+  assert.doesNotMatch(result.stdout, /^# Gemini Review/m);
+  assert.ok(result.firstStdoutAt != null);
+  assert.ok(result.closedAt - result.firstStdoutAt >= 50);
 });
 
 test("review accepts the quoted raw argument style for built-in base-branch review", () => {
@@ -205,6 +269,40 @@ test("adversarial review accepts the same base-branch targeting as review", () =
   assert.match(result.stdout, /Missing empty-state guard/);
 });
 
+test("adversarial-review --stream emits raw provider output without duplicating the rendered report", async () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeGemini(binDir, "slow-stream");
+  initGitRepo(repo);
+  fs.mkdirSync(path.join(repo, "src"));
+  fs.writeFileSync(
+    path.join(repo, "src", "app.js"),
+    "export const value = items[0].id;\n",
+  );
+  run("git", ["add", "src/app.js"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+  fs.writeFileSync(
+    path.join(repo, "src", "app.js"),
+    "export const value = items[0]?.id;\n",
+  );
+
+  const result = await runStreaming(
+    "node",
+    [SCRIPT, "adversarial-review", "--stream"],
+    {
+      cwd: repo,
+      env: buildEnv(binDir),
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /"verdict":"needs-attention"/);
+  assert.match(result.stdout, /"Missing empty-state guard"/);
+  assert.doesNotMatch(result.stdout, /^# Gemini Adversarial Review/m);
+  assert.ok(result.firstStdoutAt != null);
+  assert.ok(result.closedAt - result.firstStdoutAt >= 50);
+});
+
 test("review includes reasoning output when the app server returns it", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
@@ -250,6 +348,7 @@ test("review logs reasoning summaries and review output to the job log", () => {
   );
   const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
   assert.match(log, /Reasoning summary/);
+  assert.match(log, /Assistant message/);
   assert.match(
     log,
     /Inspected the prompt, gathered evidence, and checked the highest-risk paths first/,
@@ -438,6 +537,76 @@ test("write task output focuses on the Gemini result without generic follow-up h
   assert.equal(
     result.stdout,
     "Handled the requested task.\nTask prompt accepted.\n",
+  );
+});
+
+test("task --stream emits raw task output before the process exits", async () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeGemini(binDir, "slow-stream");
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+
+  const result = await runStreaming(
+    "node",
+    [SCRIPT, "task", "--stream", "fix the failing test"],
+    {
+      cwd: repo,
+      env: buildEnv(binDir),
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    result.stdout,
+    "Handled the requested task.\nTask prompt accepted.\n",
+  );
+  assert.ok(result.firstStdoutAt != null);
+  assert.ok(result.closedAt - result.firstStdoutAt >= 50);
+});
+
+test("review rejects --background together with --stream", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeGemini(binDir);
+  initGitRepo(repo);
+
+  const result = run("node", [SCRIPT, "review", "--background", "--stream"], {
+    cwd: repo,
+    env: buildEnv(binDir),
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(
+    `${result.stdout}\n${result.stderr}`,
+    /--background or --stream/,
+  );
+});
+
+test("task rejects --background together with --stream", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeGemini(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+
+  const result = run(
+    "node",
+    [SCRIPT, "task", "--background", "--stream", "fix the failing test"],
+    {
+      cwd: repo,
+      env: buildEnv(binDir),
+    },
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.match(
+    `${result.stdout}\n${result.stderr}`,
+    /--background or --stream/,
   );
 });
 
@@ -974,7 +1143,7 @@ test("status shows phases, hints, and the latest finished job", () => {
   );
   assert.match(
     result.stdout,
-    /`\/gemini:status review-live`<br>`\/gemini:cancel review-live`/,
+    /`\/gemini:status review-live`<br>`\/gemini:tail review-live --follow`<br>`\/gemini:cancel review-live`/,
   );
   assert.match(result.stdout, /Live details:/);
   assert.match(result.stdout, /Latest finished:/);
@@ -983,6 +1152,7 @@ test("status shows phases, hints, and the latest finished job", () => {
   assert.match(result.stdout, /Phase: reviewing/);
   assert.match(result.stdout, /Session ID: thr_1/);
   assert.match(result.stdout, /Resume: gemini --resume latest/);
+  assert.match(result.stdout, /Tail: \/gemini:tail review-live --follow/);
   assert.match(result.stdout, /Thread ready \(thr_1\)\./);
   assert.match(result.stdout, /Reviewer started: current changes/);
   assert.match(result.stdout, /Duration: 1m 5s/);
@@ -1070,6 +1240,171 @@ test("status without a job id only shows jobs from the current Claude session", 
     [...new Set(result.stdout.match(/review-(?:current|other)/g) ?? [])],
     ["review-current"],
   );
+});
+
+test("tail without a job id prefers the latest active job log from the current Claude session", () => {
+  const workspace = makeTempDir();
+  const stateDir = resolveStateDir(workspace);
+  const jobsDir = path.join(stateDir, "jobs");
+  fs.mkdirSync(jobsDir, { recursive: true });
+
+  const currentLog = path.join(jobsDir, "task-current.log");
+  const otherLog = path.join(jobsDir, "task-other.log");
+  fs.writeFileSync(
+    currentLog,
+    [
+      "[2026-03-18T15:30:00.000Z] Starting Gemini Task.",
+      "[2026-03-18T15:30:02.000Z] Running command: npm test",
+    ].join("\n"),
+    "utf8",
+  );
+  fs.writeFileSync(
+    otherLog,
+    "[2026-03-18T15:31:00.000Z] Running command: npm run build\n",
+    "utf8",
+  );
+
+  fs.writeFileSync(
+    path.join(stateDir, "state.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        config: { stopReviewGate: false },
+        jobs: [
+          {
+            id: "task-current",
+            status: "running",
+            title: "Gemini Task",
+            jobClass: "task",
+            sessionId: "sess-current",
+            summary: "Current session task",
+            logFile: currentLog,
+            createdAt: "2026-03-18T15:30:00.000Z",
+            updatedAt: "2026-03-18T15:30:02.000Z",
+          },
+          {
+            id: "task-other",
+            status: "running",
+            title: "Gemini Task",
+            jobClass: "task",
+            sessionId: "sess-other",
+            summary: "Other session task",
+            logFile: otherLog,
+            createdAt: "2026-03-18T15:31:00.000Z",
+            updatedAt: "2026-03-18T15:31:00.000Z",
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  const result = run("node", [SCRIPT, "tail"], {
+    cwd: workspace,
+    env: {
+      ...process.env,
+      GEMINI_COMPANION_SESSION_ID: "sess-current",
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Job: task-current/);
+  assert.match(result.stdout, /Status: running/);
+  assert.match(result.stdout, /Running command: npm test/);
+  assert.doesNotMatch(result.stdout, /task-other/);
+  assert.doesNotMatch(result.stdout, /npm run build/);
+});
+
+test("tail --follow streams appended log lines until the job settles", async () => {
+  const workspace = makeTempDir();
+  const stateDir = resolveStateDir(workspace);
+  const jobsDir = path.join(stateDir, "jobs");
+  fs.mkdirSync(jobsDir, { recursive: true });
+
+  const jobId = "task-live";
+  const logFile = path.join(jobsDir, `${jobId}.log`);
+  const jobFile = path.join(jobsDir, `${jobId}.json`);
+
+  fs.writeFileSync(
+    logFile,
+    "[2026-03-18T15:30:00.000Z] Starting Gemini Task.\n",
+    "utf8",
+  );
+
+  const writeJobState = (status, updatedAt, completedAt = null) => {
+    const job = {
+      id: jobId,
+      status,
+      title: "Gemini Task",
+      jobClass: "task",
+      sessionId: "sess-current",
+      summary: "Follow the live task log",
+      logFile,
+      createdAt: "2026-03-18T15:30:00.000Z",
+      updatedAt,
+      ...(completedAt ? { completedAt } : {}),
+    };
+    fs.writeFileSync(
+      path.join(stateDir, "state.json"),
+      `${JSON.stringify(
+        {
+          version: 1,
+          config: { stopReviewGate: false },
+          jobs: [job],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    fs.writeFileSync(jobFile, `${JSON.stringify(job, null, 2)}\n`, "utf8");
+  };
+
+  writeJobState("running", "2026-03-18T15:30:00.000Z");
+
+  setTimeout(() => {
+    fs.appendFileSync(
+      logFile,
+      "[2026-03-18T15:30:01.000Z] Running command: npm test\n",
+      "utf8",
+    );
+    writeJobState("running", "2026-03-18T15:30:01.000Z");
+  }, 80);
+
+  setTimeout(() => {
+    fs.appendFileSync(
+      logFile,
+      "\n[2026-03-18T15:30:02.000Z] Final output\nHandled the requested task.\n",
+      "utf8",
+    );
+    writeJobState(
+      "completed",
+      "2026-03-18T15:30:02.000Z",
+      "2026-03-18T15:30:02.000Z",
+    );
+  }, 160);
+
+  const result = await runStreaming(
+    "node",
+    [SCRIPT, "tail", jobId, "--follow"],
+    {
+      cwd: workspace,
+      env: {
+        ...process.env,
+        GEMINI_COMPANION_SESSION_ID: "sess-current",
+      },
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Job: task-live/);
+  assert.match(result.stdout, /Mode: follow/);
+  assert.match(result.stdout, /Starting Gemini Task\./);
+  assert.match(result.stdout, /Running command: npm test/);
+  assert.match(result.stdout, /Final output/);
+  assert.match(result.stdout, /Handled the requested task\./);
 });
 
 test("status preserves adversarial review kind labels", () => {

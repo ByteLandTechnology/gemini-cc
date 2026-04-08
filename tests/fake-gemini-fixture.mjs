@@ -257,6 +257,30 @@ if (parsed.outputFormat === "stream-json") {
     return;
   }
 
+  if (BEHAVIOR === "slow-stream") {
+    setTimeout(() => {
+      outputJsonLine({
+        type: "message",
+        role: "assistant",
+        content: response
+      });
+      setTimeout(() => {
+        outputJsonLine({
+          type: "result",
+          sessionId: session.id,
+          resumeToken: session.resumeId,
+          response,
+          stats: {
+            input_tokens: 10,
+            output_tokens: 20
+          }
+        });
+        process.exit(0);
+      }, 80);
+    }, 80);
+    return;
+  }
+
   if (BEHAVIOR === "with-reasoning") {
     outputJsonLine({
       type: "reasoning",

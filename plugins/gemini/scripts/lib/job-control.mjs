@@ -441,3 +441,47 @@ export function resolveCancelableJob(cwd, reference) {
 
   throw new Error("No active Gemini jobs to cancel.");
 }
+
+/**
+ * Resolves the best job to tail based on an explicit reference or the latest
+ * current-session job with a log file, preferring active jobs first.
+ *
+ * @param {string} cwd - Current working directory
+ * @param {string} [reference] - Optional job ID or prefix
+ * @param {object} [options={}] - Resolution options
+ * @param {object} [options.env] - Environment variables used for session filtering
+ * @returns {{workspaceRoot: string, job: object}} Tail target job
+ * @throws {Error} If no matching job with a log file can be found
+ */
+export function resolveTailJob(cwd, reference, options = {}) {
+  const workspaceRoot = resolveWorkspaceRoot(cwd);
+  const jobs = sortJobsNewestFirst(
+    reference
+      ? listJobs(workspaceRoot)
+      : filterJobsForCurrentSession(listJobs(workspaceRoot), options),
+  );
+  const loggedJobs = jobs.filter(
+    (job) => typeof job.logFile === "string" && job.logFile.trim(),
+  );
+
+  if (reference) {
+    const selected = matchJobReference(loggedJobs, reference);
+    if (!selected) {
+      throw new Error(`No job with a log file found for "${reference}".`);
+    }
+    return { workspaceRoot, job: selected };
+  }
+
+  const active = loggedJobs.find(
+    (job) => job.status === "queued" || job.status === "running",
+  );
+  if (active) {
+    return { workspaceRoot, job: active };
+  }
+
+  if (loggedJobs.length > 0) {
+    return { workspaceRoot, job: loggedJobs[0] };
+  }
+
+  throw new Error("No Gemini job logs found for this repository yet.");
+}

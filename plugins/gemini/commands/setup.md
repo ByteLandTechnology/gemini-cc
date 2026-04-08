@@ -1,6 +1,6 @@
 ---
 description: Check Gemini CLI status, configure default model, and manage review gate
-argument-hint: '[--enable-review-gate|--disable-review-gate] [--set-model <model>]'
+argument-hint: "[--enable-review-gate|--disable-review-gate] [--set-model <model>] [--stream]"
 allowed-tools: Bash(node:*), Bash(npm:*), AskUserQuestion
 ---
 
@@ -11,6 +11,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" setup --json $ARGUMENT
 ```
 
 Parse the JSON output to extract:
+
 - `ready` — whether Gemini is installed and authenticated
 - `provider.available` — whether Gemini CLI is installed
 - `auth.loggedIn` — whether Gemini is authenticated
@@ -19,6 +20,7 @@ Parse the JSON output to extract:
 - `defaultModel` — current default model (may be null)
 
 **If explicit flags were provided** (i.e., `$ARGUMENTS` is not empty):
+
 - Present the final setup output to the user.
 - Stop here.
 
@@ -50,6 +52,7 @@ If `ready` is true, present a menu using `AskUserQuestion` to configure settings
 **Menu questions (ask one at a time in this order):**
 
 1. **Model selection** — ask which model to use as default:
+
    ```
    question: "Which model should be the default for /gemini:rescue and /gemini:review?"
    header: "Default Model"
@@ -88,6 +91,7 @@ If `ready` is true, present a menu using `AskUserQuestion` to configure settings
      (Use the model ID from the selected option label, e.g. `gemini-2.5-flash`)
 
 2. **Review gate** — if `reviewGateEnabled` is false, ask:
+
    ```
    question: "Enable the stop-time review gate? When enabled, Gemini reviews Claude's response before each stop and may block the stop if issues are found."
    header: "Review Gate"
@@ -100,6 +104,7 @@ If `ready` is true, present a menu using `AskUserQuestion` to configure settings
    ```
 
    If `reviewGateEnabled` is true, ask:
+
    ```
    question: "The review gate is currently enabled. Disable it?"
    header: "Review Gate"

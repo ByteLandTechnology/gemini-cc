@@ -43,6 +43,7 @@ import {
   readStoredJob,
   resolveCancelableJob,
   resolveResultJob,
+  resolveTailJob,
   sortJobsNewestFirst,
 } from "./lib/job-control.mjs";
 import {
@@ -75,6 +76,8 @@ const REVIEW_SCHEMA = path.join(
 );
 const DEFAULT_STATUS_WAIT_TIMEOUT_MS = 240000;
 const DEFAULT_STATUS_POLL_INTERVAL_MS = 2000;
+const DEFAULT_TAIL_LINES = 40;
+const DEFAULT_TAIL_POLL_INTERVAL_MS = 250;
 const VALID_REASONING_EFFORTS = new Set([
   "none",
   "minimal",
@@ -91,13 +94,14 @@ function printUsage() {
   console.log(
     [
       "Usage:",
-      "  node scripts/gemini-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--set-model <model>] [--json]",
-      "  node scripts/gemini-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
-      "  node scripts/gemini-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
-      "  node scripts/gemini-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
-      "  node scripts/gemini-companion.mjs status [job-id] [--all] [--json]",
-      "  node scripts/gemini-companion.mjs result [job-id] [--json]",
-      "  node scripts/gemini-companion.mjs cancel [job-id] [--json]",
+      "  node scripts/gemini-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--set-model <model>] [--stream] [--json]",
+      "  node scripts/gemini-companion.mjs review [--wait|--background] [--stream] [--base <ref>] [--scope <auto|working-tree|branch>]",
+      "  node scripts/gemini-companion.mjs adversarial-review [--wait|--background] [--stream] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
+      "  node scripts/gemini-companion.mjs task [--background] [--stream] [--write] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
+      "  node scripts/gemini-companion.mjs status [job-id] [--all] [--stream] [--json]",
+      "  node scripts/gemini-companion.mjs result [job-id] [--stream] [--json]",
+      "  node scripts/gemini-companion.mjs cancel [job-id] [--stream] [--json]",
+      "  node scripts/gemini-companion.mjs tail [job-id] [--follow] [--lines <n>]",
     ].join("\n"),
   );
 }
@@ -112,6 +116,30 @@ function outputResult(value, asJson) {
 
 function outputCommandResult(payload, rendered, asJson) {
   outputResult(asJson ? payload : rendered, asJson);
+}
+
+function createStdoutStreamer(enabled) {
+  let wrote = false;
+  let lastChar = "";
+  return {
+    write(chunk) {
+      if (!enabled || !chunk) {
+        return;
+      }
+      const text = String(chunk);
+      if (!text) {
+        return;
+      }
+      process.stdout.write(text);
+      wrote = true;
+      lastChar = text.slice(-1);
+    },
+    finishLine() {
+      if (enabled && wrote && lastChar !== "\n") {
+        process.stdout.write("\n");
+      }
+    },
+  };
 }
 
 function normalizeRequestedModel(model) {
@@ -174,6 +202,17 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function normalizePositiveInteger(value, fallback) {
+  if (value == null || value === "") {
+    return fallback;
+  }
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Expected a positive integer, got "${value}".`);
+  }
+  return parsed;
+}
+
 function shorten(text, limit = 96) {
   const normalized = String(text ?? "")
     .trim()
@@ -193,6 +232,52 @@ function firstMeaningfulLine(text, fallback) {
     .map((value) => value.trim())
     .find(Boolean);
   return line ?? fallback;
+}
+
+function renderTailOutput(job, logFile, content, options = {}) {
+  const lines = [
+    `# ${job.title ?? "Gemini Tail"}`,
+    "",
+    `Job: ${job.id}`,
+    `Status: ${job.status}`,
+    `Log: ${logFile}`,
+  ];
+  if (options.follow) {
+    lines.push("Mode: follow");
+  }
+  lines.push("");
+  if (content) {
+    lines.push(content.endsWith("\n") ? content.slice(0, -1) : content);
+  } else {
+    lines.push("(log is empty)");
+  }
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+function readTailSlice(logFile, maxLines) {
+  if (!logFile || !fs.existsSync(logFile)) {
+    return "";
+  }
+
+  const lines = fs.readFileSync(logFile, "utf8").split(/\r?\n/);
+  if (lines.length > 0 && lines.at(-1) === "") {
+    lines.pop();
+  }
+  const slice = lines.slice(-maxLines).join("\n");
+  return slice ? `${slice}\n` : "";
+}
+
+function readLogAppend(logFile, offset) {
+  if (!logFile || !fs.existsSync(logFile)) {
+    return { content: "", nextOffset: offset };
+  }
+
+  const data = fs.readFileSync(logFile);
+  const safeOffset = Math.max(0, Math.min(offset, data.length));
+  return {
+    content: data.subarray(safeOffset).toString("utf8"),
+    nextOffset: data.length,
+  };
 }
 
 function buildSetupReport(cwd, actionsTaken = []) {
@@ -245,7 +330,12 @@ function buildSetupReport(cwd, actionsTaken = []) {
 function handleSetup(argv) {
   const { options } = parseCommandInput(argv, {
     valueOptions: ["cwd", "set-model"],
-    booleanOptions: ["json", "enable-review-gate", "disable-review-gate"],
+    booleanOptions: [
+      "json",
+      "enable-review-gate",
+      "disable-review-gate",
+      "stream",
+    ],
   });
 
   if (options["enable-review-gate"] && options["disable-review-gate"]) {
@@ -441,6 +531,7 @@ async function executeReviewRun(request) {
       target: reviewTarget,
       model: request.model,
       onProgress: request.onProgress,
+      onStreamText: request.onStreamText,
     });
     const payload = {
       review: reviewName,
@@ -481,6 +572,7 @@ async function executeReviewRun(request) {
         result.reviewText,
         `${reviewName} completed.`,
       ),
+      streamedOutput: Boolean(result.streamedOutput),
       jobTitle: `${providerInfo.displayName} ${reviewName}`,
       jobClass: "review",
       targetLabel: target.label,
@@ -495,6 +587,7 @@ async function executeReviewRun(request) {
     sandbox: "read-only",
     outputSchema: readOutputSchema(REVIEW_SCHEMA),
     onProgress: request.onProgress,
+    onStreamText: request.onStreamText,
   });
   const parsed = parseStructuredOutput(result.finalMessage, {
     status: result.status,
@@ -539,6 +632,7 @@ async function executeReviewRun(request) {
       parsed.parsed?.summary ??
       parsed.parseError ??
       firstMeaningfulLine(result.finalMessage, `${reviewName} finished.`),
+    streamedOutput: Boolean(result.streamedOutput),
     jobTitle: `${providerInfo.displayName} ${reviewName}`,
     jobClass: "review",
     targetLabel: context.target.label,
@@ -582,6 +676,7 @@ async function executeTaskRun(request) {
     effort: request.effort,
     sandbox: request.write ? "workspace-write" : "read-only",
     onProgress: request.onProgress,
+    onStreamText: request.onStreamText,
     persistThread: true,
     threadName: resumeThreadId
       ? null
@@ -626,6 +721,7 @@ async function executeTaskRun(request) {
       rawOutput,
       firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`),
     ),
+    streamedOutput: Boolean(result.streamedOutput),
     jobTitle: taskMetadata.title,
     jobClass: "task",
     write: Boolean(request.write),
@@ -760,17 +856,36 @@ function requireTaskRequest(prompt, resumeLast) {
 }
 
 async function runForegroundCommand(job, runner, options = {}) {
+  const streamOutput = Boolean(options.stream && !options.json);
+  const streamer = createStdoutStreamer(streamOutput);
   const { logFile, progress } = createTrackedProgress(job, {
     logFile: options.logFile,
     stderr: !options.json,
   });
-  const execution = await runTrackedJob(job, () => runner(progress), {
-    logFile,
-  });
-  outputResult(
-    options.json ? execution.payload : execution.rendered,
-    options.json,
+  const execution = await runTrackedJob(
+    job,
+    () =>
+      runner({
+        progress,
+        onStreamText: streamOutput ? streamer.write : null,
+      }),
+    {
+      logFile,
+    },
   );
+  const shouldSuppressFinalOutput =
+    streamOutput &&
+    execution.streamedOutput &&
+    execution.exitStatus === 0 &&
+    !options.json;
+  if (shouldSuppressFinalOutput) {
+    streamer.finishLine();
+  } else {
+    outputResult(
+      options.json ? execution.payload : execution.rendered,
+      options.json,
+    );
+  }
   if (execution.exitStatus !== 0) {
     process.exitCode = execution.exitStatus;
   }
@@ -825,7 +940,7 @@ function enqueueBackgroundTask(cwd, job, request) {
 async function handleReviewCommand(argv, config) {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ["base", "scope", "model", "cwd"],
-    booleanOptions: ["json", "background", "wait"],
+    booleanOptions: ["json", "background", "wait", "stream"],
     aliasMap: {
       m: "model",
     },
@@ -833,6 +948,9 @@ async function handleReviewCommand(argv, config) {
 
   const cwd = resolveCommandCwd(options);
   const workspaceRoot = resolveCommandWorkspace(options);
+  if (options.background && options.stream) {
+    throw new Error("Choose either --background or --stream.");
+  }
   const focusText = positionals.join(" ").trim();
   const target = resolveReviewTarget(cwd, {
     base: options.base,
@@ -851,7 +969,7 @@ async function handleReviewCommand(argv, config) {
   });
   await runForegroundCommand(
     job,
-    (progress) =>
+    ({ progress, onStreamText }) =>
       executeReviewRun({
         cwd,
         base: options.base,
@@ -860,8 +978,9 @@ async function handleReviewCommand(argv, config) {
         focusText,
         reviewName: config.reviewName,
         onProgress: progress,
+        onStreamText,
       }),
-    { json: options.json },
+    { json: options.json, stream: options.stream },
   );
 }
 
@@ -882,6 +1001,7 @@ async function handleTask(argv) {
       "resume",
       "fresh",
       "background",
+      "stream",
     ],
     aliasMap: {
       m: "model",
@@ -893,6 +1013,9 @@ async function handleTask(argv) {
   const model = normalizeRequestedModel(options.model);
   const effort = normalizeReasoningEffort(options.effort);
   const prompt = readTaskPrompt(cwd, options, positionals);
+  if (options.background && options.stream) {
+    throw new Error("Choose either --background or --stream.");
+  }
 
   const resumeLast = Boolean(options["resume-last"] || options.resume);
   const fresh = Boolean(options.fresh);
@@ -927,7 +1050,7 @@ async function handleTask(argv) {
   const job = buildTaskJob(workspaceRoot, taskMetadata, write);
   await runForegroundCommand(
     job,
-    (progress) =>
+    ({ progress, onStreamText }) =>
       executeTaskRun({
         cwd,
         model,
@@ -937,8 +1060,9 @@ async function handleTask(argv) {
         resumeLast,
         jobId: job.id,
         onProgress: progress,
+        onStreamText,
       }),
-    { json: options.json },
+    { json: options.json, stream: options.stream },
   );
 }
 
@@ -992,7 +1116,7 @@ async function handleTaskWorker(argv) {
 async function handleStatus(argv) {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ["cwd", "timeout-ms", "poll-interval-ms"],
-    booleanOptions: ["json", "all", "wait"],
+    booleanOptions: ["json", "all", "wait", "stream"],
   });
 
   const cwd = resolveCommandCwd(options);
@@ -1023,7 +1147,7 @@ async function handleStatus(argv) {
 function handleResult(argv) {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ["cwd"],
-    booleanOptions: ["json"],
+    booleanOptions: ["json", "stream"],
   });
 
   const cwd = resolveCommandCwd(options);
@@ -1045,7 +1169,7 @@ function handleResult(argv) {
 function handleTaskResumeCandidate(argv) {
   const { options } = parseCommandInput(argv, {
     valueOptions: ["cwd"],
-    booleanOptions: ["json"],
+    booleanOptions: ["json", "stream"],
   });
 
   const cwd = resolveCommandCwd(options);
@@ -1086,10 +1210,71 @@ function handleTaskResumeCandidate(argv) {
   outputCommandResult(payload, rendered, options.json);
 }
 
+async function handleTail(argv) {
+  const { options, positionals } = parseCommandInput(argv, {
+    valueOptions: ["cwd", "lines"],
+    booleanOptions: ["follow"],
+  });
+
+  const cwd = resolveCommandCwd(options);
+  const reference = positionals[0] ?? "";
+  const lineCount = normalizePositiveInteger(options.lines, DEFAULT_TAIL_LINES);
+  const { workspaceRoot, job } = resolveTailJob(cwd, reference, {
+    env: process.env,
+  });
+  const logFile = job.logFile;
+  if (!logFile) {
+    throw new Error(`Job ${job.id} does not have a log file yet.`);
+  }
+
+  const initialContent = readTailSlice(logFile, lineCount);
+  process.stdout.write(
+    renderTailOutput(job, logFile, initialContent, {
+      follow: Boolean(options.follow),
+    }),
+  );
+
+  if (!options.follow || !isActiveJobStatus(job.status)) {
+    return;
+  }
+
+  let { nextOffset } = readLogAppend(logFile, 0);
+  let inactivePolls = 0;
+
+  while (true) {
+    await sleep(DEFAULT_TAIL_POLL_INTERVAL_MS);
+
+    const { content, nextOffset: updatedOffset } = readLogAppend(
+      logFile,
+      nextOffset,
+    );
+    nextOffset = updatedOffset;
+    if (content) {
+      process.stdout.write(content);
+    }
+
+    const currentJob = readStoredJob(workspaceRoot, job.id) ?? job;
+    if (isActiveJobStatus(currentJob.status)) {
+      inactivePolls = 0;
+      continue;
+    }
+
+    if (content) {
+      inactivePolls = 1;
+      continue;
+    }
+
+    inactivePolls += 1;
+    if (inactivePolls >= 2) {
+      break;
+    }
+  }
+}
+
 async function handleCancel(argv) {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ["cwd"],
-    booleanOptions: ["json"],
+    booleanOptions: ["json", "stream"],
   });
 
   const cwd = resolveCommandCwd(options);
@@ -1183,6 +1368,9 @@ async function main() {
       break;
     case "cancel":
       await handleCancel(argv);
+      break;
+    case "tail":
+      await handleTail(argv);
       break;
     default:
       throw new Error(`Unknown subcommand: ${subcommand}`);

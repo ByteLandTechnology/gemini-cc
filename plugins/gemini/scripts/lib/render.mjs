@@ -209,6 +209,9 @@ function appendActiveJobsTable(lines, jobs) {
   lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const job of jobs) {
     const actions = [`/gemini:status ${job.id}`];
+    if (job.logFile) {
+      actions.push(`/gemini:tail ${job.id} --follow`);
+    }
     if (job.status === "queued" || job.status === "running") {
       actions.push(`/gemini:cancel ${job.id}`);
     }
@@ -241,6 +244,9 @@ function pushJobDetails(lines, job, options = {}) {
   }
   if (job.logFile && options.showLog) {
     lines.push(`  Log: ${job.logFile}`);
+    lines.push(
+      `  Tail: /gemini:tail ${job.id}${job.status === "queued" || job.status === "running" ? " --follow" : ""}`,
+    );
   }
   if (
     (job.status === "queued" || job.status === "running") &&

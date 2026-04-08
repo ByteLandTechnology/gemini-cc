@@ -1,6 +1,6 @@
 ---
 description: Delegate investigation, an explicit fix request, or follow-up rescue work to the Gemini rescue subagent
-argument-hint: "[--background|--wait] [--resume|--fresh] [--model <model|flash>] [--effort <none|minimal|low|medium|high|xhigh>] [what Gemini should investigate, solve, or continue]"
+argument-hint: "[--background|--wait] [--stream] [--resume|--fresh] [--model <model|flash>] [--effort <none|minimal|low|medium|high|xhigh>] [what Gemini should investigate, solve, or continue]"
 context: fork
 allowed-tools: Bash(node:*), AskUserQuestion
 ---
@@ -13,11 +13,13 @@ $ARGUMENTS
 
 Execution mode:
 
+- If the request includes both `--background` and `--stream`, stop and tell the user to choose one.
+- If the request includes `--stream`, run the `gemini:rescue` subagent in the foreground.
 - If the request includes `--background`, run the `gemini:rescue` subagent in the background.
 - If the request includes `--wait`, run the `gemini:rescue` subagent in the foreground.
 - If neither flag is present, default to foreground.
 - `--background` and `--wait` are execution flags for Claude Code. Do not forward them to `task`, and do not treat them as part of the natural-language task text.
-- `--model` and `--effort` are runtime-selection flags. Preserve them for the forwarded `task` call, but do not treat them as part of the natural-language task text.
+- `--stream`, `--model`, and `--effort` are runtime-selection flags. Preserve them for the forwarded `task` call, but do not treat them as part of the natural-language task text.
 - If the request includes `--resume`, do not ask whether to continue. The user already chose.
 - If the request includes `--fresh`, do not ask whether to continue. The user already chose.
 - Otherwise, before starting Gemini, check for a resumable rescue thread from this Claude session by running:
@@ -41,6 +43,8 @@ Operating rules:
 - The subagent is a thin forwarder only. It should use one `Bash` call to invoke `node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" task ...` and return that command's stdout as-is.
 - Return the Gemini companion stdout verbatim to the user.
 - Do not paraphrase, summarize, rewrite, or add commentary before or after it.
+- `--stream` forces foreground execution and conflicts with `--background`.
+- In stream mode, the task prints raw Gemini text incrementally instead of waiting for the final buffered output.
 - Do not ask the subagent to inspect files, monitor progress, poll `/gemini:status`, fetch `/gemini:result`, call `/gemini:cancel`, summarize output, or do follow-up work of its own.
 - Leave `--effort` unset unless the user explicitly asks for a specific reasoning effort.
 - Leave the model unset unless the user explicitly asks for one. If they ask for `spark`, map it to `flash` for compatibility.

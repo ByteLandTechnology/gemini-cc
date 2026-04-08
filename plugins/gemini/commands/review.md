@@ -1,6 +1,6 @@
 ---
 description: Run a Gemini-backed code review against local git state
-argument-hint: "[--wait|--background] [--base <ref>] [--scope auto|working-tree|branch]"
+argument-hint: "[--wait|--background] [--stream] [--base <ref>] [--scope auto|working-tree|branch]"
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion
 ---
@@ -18,6 +18,8 @@ Core constraint:
 
 Execution mode rules:
 
+- If the raw arguments include both `--background` and `--stream`, stop and tell the user to choose one.
+- If the raw arguments include `--stream`, do not ask. Run the review in the foreground.
 - If the raw arguments include `--wait`, do not ask. Run the review in the foreground.
 - If the raw arguments include `--background`, do not ask. Run the review in a Claude background task.
 - Otherwise, estimate the review size before asking:
@@ -37,8 +39,11 @@ Argument handling:
 
 - Preserve the user's arguments exactly.
 - Do not strip `--wait` or `--background` yourself.
+- Preserve `--stream` exactly when the user passes it.
 - Do not add extra review instructions or rewrite the user's intent.
 - The companion script parses `--wait` and `--background`, but Claude Code's `Bash(..., run_in_background: true)` is what actually detaches the run.
+- `--stream` forces foreground execution and conflicts with `--background`.
+- In stream mode, the review prints raw Gemini text incrementally instead of waiting for the final formatted render.
 - `/gemini:review` is native-review only. It does not support staged-only review, unstaged-only review, or extra focus text.
 - If the user needs custom review instructions or more adversarial framing, they should use `/gemini:adversarial-review`.
 

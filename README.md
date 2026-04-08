@@ -12,7 +12,7 @@ The repository and marketplace source slug may still contain `codex-plugin-cc` a
 
 - `/gemini:review` for a normal read-only Gemini-backed review
 - `/gemini:adversarial-review` for a steerable challenge review
-- `/gemini:rescue`, `/gemini:status`, `/gemini:result`, and `/gemini:cancel` to delegate work and manage background jobs
+- `/gemini:rescue`, `/gemini:status`, `/gemini:tail`, `/gemini:result`, and `/gemini:cancel` to delegate work and manage background jobs
 
 ## Requirements
 
@@ -110,7 +110,7 @@ Use it when you want:
 - a review of your current uncommitted changes
 - a review of your branch compared to a base branch like `main`
 
-Use `--base <ref>` for branch review. Use `--scope working-tree` to force an uncommitted review or `--scope branch` to compare against the detected default branch. It also supports `--scope auto`, `--wait`, and `--background`. It is not steerable and does not take custom focus text. Use [`/gemini:adversarial-review`](#geminiadversarial-review) when you want to challenge a specific decision or risk area.
+Use `--base <ref>` for branch review. Use `--scope working-tree` to force an uncommitted review or `--scope branch` to compare against the detected default branch. It also supports `--scope auto`, `--wait`, `--background`, and `--stream`. `--stream` forces foreground execution, conflicts with `--background`, and prints raw Gemini text as it arrives. It is not steerable and does not take custom focus text. Use [`/gemini:adversarial-review`](#geminiadversarial-review) when you want to challenge a specific decision or risk area.
 
 Examples:
 
@@ -118,6 +118,7 @@ Examples:
 /gemini:review
 /gemini:review --base main
 /gemini:review --scope working-tree
+/gemini:review --stream
 /gemini:review --background
 ```
 
@@ -130,7 +131,7 @@ Runs a **steerable** review that questions the chosen implementation and design.
 It can be used to pressure-test assumptions, tradeoffs, failure modes, and whether a different approach would have been safer or simpler.
 
 It uses the same review target selection as `/gemini:review`, including `--base <ref>` for branch review and `--scope auto|working-tree|branch` for explicit target selection.
-It also supports `--wait` and `--background`. Unlike `/gemini:review`, it can take extra focus text after the flags.
+It also supports `--wait`, `--background`, and `--stream`. `--stream` forces foreground execution, conflicts with `--background`, and prints raw Gemini text as it arrives. Unlike `/gemini:review`, it can take extra focus text after the flags.
 
 Use it when you want:
 
@@ -142,6 +143,7 @@ Examples:
 
 ```bash
 /gemini:adversarial-review
+/gemini:adversarial-review --stream
 /gemini:adversarial-review --base main challenge whether this was the right caching and retry design
 /gemini:adversarial-review --scope branch look for rollback and migration risks
 /gemini:adversarial-review --background look for race conditions and question the chosen approach
@@ -163,13 +165,14 @@ Use it when you want Gemini to:
 > [!NOTE]
 > Depending on the task and the model you choose these tasks might take a long time and it's generally recommended to force the task to be in the background or move the agent to the background.
 
-It supports `--background`, `--wait`, `--resume`, and `--fresh`. If you omit `--resume` and `--fresh`, the plugin can offer to continue the latest rescue thread for this repo.
+It supports `--background`, `--wait`, `--stream`, `--resume`, and `--fresh`. `--stream` forces foreground execution, conflicts with `--background`, and prints raw Gemini text as it arrives. If you omit `--resume` and `--fresh`, the plugin can offer to continue the latest rescue thread for this repo.
 
 Examples:
 
 ```bash
 /gemini:rescue investigate why the tests started failing
 /gemini:rescue fix the failing test with the smallest safe patch
+/gemini:rescue --stream investigate why the tests started failing
 /gemini:rescue --resume apply the top fix from the last run
 /gemini:rescue --model pro --effort medium investigate the flaky integration test
 /gemini:rescue --model flash fix the issue quickly
@@ -206,6 +209,26 @@ Use it to:
 - check progress on background work
 - see the latest completed job
 - confirm whether a task is still running
+
+### `/gemini:tail`
+
+Shows the stored job log for a Gemini run, with an optional live follow mode for background work.
+If you do not pass a job id, it prefers the latest active job for the current Claude session.
+
+Examples:
+
+```bash
+/gemini:tail
+/gemini:tail task-abc123
+/gemini:tail --follow
+/gemini:tail task-abc123 --follow --lines 80
+```
+
+Use it to:
+
+- inspect the live log for a background review or rescue run
+- keep following appended output until the job finishes
+- look back at tool progress, reasoning summaries, and final output blocks without opening the log file manually
 
 ### `/gemini:result`
 
@@ -283,7 +306,7 @@ The plugin now wraps Gemini CLI in headless mode. It uses the global `gemini` bi
 
 ### Common Configurations
 
-Use Gemini CLI configuration, environment variables, and model flags for provider-level control. The plugin preserves `--model` and `--effort` rescue flags and passes the selected model through to Gemini CLI.
+Use Gemini CLI configuration, environment variables, and model flags for provider-level control. The plugin preserves `--stream`, `--model`, and `--effort` rescue flags through the companion runtime, and forwards model and effort selection on to Gemini CLI.
 
 ### Moving The Work Over To Gemini
 

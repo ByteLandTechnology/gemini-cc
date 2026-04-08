@@ -21,6 +21,7 @@ test("review command uses AskUserQuestion and background Bash while staying revi
   assert.match(source, /```bash/);
   assert.match(source, /```typescript/);
   assert.match(source, /review "\$ARGUMENTS"/);
+  assert.match(source, /\[--stream\]/);
   assert.match(source, /\[--scope auto\|working-tree\|branch\]/);
   assert.match(source, /run_in_background:\s*true/);
   assert.match(
@@ -48,6 +49,19 @@ test("review command uses AskUserQuestion and background Bash while staying revi
     source,
     /The companion script parses `--wait` and `--background`/i,
   );
+  assert.match(source, /Preserve `--stream` exactly when the user passes it/i);
+  assert.match(
+    source,
+    /If the raw arguments include `--stream`, do not ask\. Run the review in the foreground\./i,
+  );
+  assert.match(
+    source,
+    /If the raw arguments include both `--background` and `--stream`, stop and tell the user to choose one\./i,
+  );
+  assert.match(
+    source,
+    /`--stream` forces foreground execution and conflicts with `--background`\./i,
+  );
   assert.match(
     source,
     /Claude Code's `Bash\(..., run_in_background: true\)` is what actually detaches the run/i,
@@ -72,7 +86,7 @@ test("adversarial review command uses AskUserQuestion and background Bash while 
   assert.match(source, /adversarial-review "\$ARGUMENTS"/);
   assert.match(
     source,
-    /\[--scope auto\|working-tree\|branch\] \[focus \.\.\.\]/,
+    /\[--stream\] \[--base <ref>\] \[--scope auto\|working-tree\|branch\] \[focus \.\.\.\]/,
   );
   assert.match(source, /run_in_background:\s*true/);
   assert.match(
@@ -99,6 +113,19 @@ test("adversarial review command uses AskUserQuestion and background Bash while 
   assert.match(
     source,
     /The companion script parses `--wait` and `--background`/i,
+  );
+  assert.match(source, /Preserve `--stream` exactly when the user passes it/i);
+  assert.match(
+    source,
+    /If the raw arguments include `--stream`, do not ask\. Run in the foreground\./i,
+  );
+  assert.match(
+    source,
+    /If the raw arguments include both `--background` and `--stream`, stop and tell the user to choose one\./i,
+  );
+  assert.match(
+    source,
+    /`--stream` forces foreground execution and conflicts with `--background`\./i,
   );
   assert.match(
     source,
@@ -133,6 +160,7 @@ test("continue is not exposed as a user-facing command", () => {
     "review.md",
     "setup.md",
     "status.md",
+    "tail.md",
   ]);
 });
 
@@ -148,6 +176,7 @@ test("rescue command absorbs continue semantics", () => {
   );
   assert.match(rescue, /allowed-tools:\s*Bash\(node:\*\),\s*AskUserQuestion/);
   assert.match(rescue, /--background\|--wait/);
+  assert.match(rescue, /\[--stream\]/);
   assert.match(rescue, /--resume\|--fresh/);
   assert.match(rescue, /--model <model\|flash>/);
   assert.match(rescue, /--effort <none\|minimal\|low\|medium\|high\|xhigh>/);
@@ -158,7 +187,18 @@ test("rescue command absorbs continue semantics", () => {
   assert.match(rescue, /run the `gemini:rescue` subagent in the background/i);
   assert.match(rescue, /default to foreground/i);
   assert.match(rescue, /Do not forward them to `task`/i);
-  assert.match(rescue, /`--model` and `--effort` are runtime-selection flags/i);
+  assert.match(
+    rescue,
+    /`--stream`, `--model`, and `--effort` are runtime-selection flags/i,
+  );
+  assert.match(
+    rescue,
+    /If the request includes `--stream`, run the `gemini:rescue` subagent in the foreground\./i,
+  );
+  assert.match(
+    rescue,
+    /If the request includes both `--background` and `--stream`, stop and tell the user to choose one\./i,
+  );
   assert.match(
     rescue,
     /Leave `--effort` unset unless the user explicitly asks for a specific reasoning effort/i,
@@ -178,6 +218,10 @@ test("rescue command absorbs continue semantics", () => {
   assert.match(
     rescue,
     /Return the Gemini companion stdout verbatim to the user/i,
+  );
+  assert.match(
+    rescue,
+    /`--stream` forces foreground execution and conflicts with `--background`\./i,
   );
   assert.match(
     rescue,
@@ -223,6 +267,18 @@ test("rescue command absorbs continue semantics", () => {
   );
   assert.match(
     agent,
+    /Preserve `--stream` when the user explicitly asks for streaming output/i,
+  );
+  assert.match(
+    agent,
+    /Treat `--stream`, `--effort <value>`, and `--model <value>` as runtime controls/i,
+  );
+  assert.match(
+    agent,
+    /`--stream` forces foreground execution and conflicts with `--background`\./i,
+  );
+  assert.match(
+    agent,
     /Return the stdout of the `gemini-companion` command exactly as-is/i,
   );
   assert.match(
@@ -259,10 +315,22 @@ test("rescue command absorbs continue semantics", () => {
     /Leave `--effort` unset unless the user explicitly requests a specific effort/i,
   );
   assert.match(runtimeSkill, /Leave model unset by default/i);
+  assert.match(
+    runtimeSkill,
+    /Preserve `--stream` when the user explicitly asks for streaming output/i,
+  );
   assert.match(runtimeSkill, /Map `spark` to `--model flash`/i);
   assert.match(
     runtimeSkill,
     /If the forwarded request includes `--background` or `--wait`, treat that as Claude-side execution control only/i,
+  );
+  assert.match(
+    runtimeSkill,
+    /If the forwarded request includes `--stream`, pass it through to `task`/i,
+  );
+  assert.match(
+    runtimeSkill,
+    /`--stream` forces foreground execution and conflicts with `--background`\./i,
   );
   assert.match(runtimeSkill, /Strip it before calling `task`/i);
   assert.match(
@@ -288,6 +356,12 @@ test("rescue command absorbs continue semantics", () => {
   assert.match(readme, /### `\/gemini:setup`/);
   assert.match(readme, /### `\/gemini:review`/);
   assert.match(readme, /### `\/gemini:adversarial-review`/);
+  assert.match(readme, /\/gemini:review --stream/);
+  assert.match(readme, /\/gemini:adversarial-review --stream/);
+  assert.match(
+    readme,
+    /\/gemini:rescue --stream investigate why the tests started failing/,
+  );
   assert.match(
     readme,
     /uses the same review target selection as `\/gemini:review`/i,
@@ -298,19 +372,48 @@ test("rescue command absorbs continue semantics", () => {
   );
   assert.match(readme, /### `\/gemini:rescue`/);
   assert.match(readme, /### `\/gemini:status`/);
+  assert.match(readme, /### `\/gemini:tail`/);
   assert.match(readme, /### `\/gemini:result`/);
   assert.match(readme, /### `\/gemini:cancel`/);
+  assert.match(
+    readme,
+    /`--stream` forces foreground execution, conflicts with `--background`, and prints raw Gemini text as it arrives/i,
+  );
 });
 
 test("result and cancel commands are exposed as deterministic runtime entrypoints", () => {
   const result = read("commands/result.md");
   const cancel = read("commands/cancel.md");
+  const status = read("commands/status.md");
+  const setup = read("commands/setup.md");
+  const tail = read("commands/tail.md");
   const resultHandling = read("skills/gemini-result-handling/SKILL.md");
 
   assert.match(result, /disable-model-invocation:\s*true/);
+  assert.match(result, /argument-hint:\s*"\[job-id\] \[--stream\]"/);
   assert.match(result, /gemini-companion\.mjs" result \$ARGUMENTS/);
   assert.match(cancel, /disable-model-invocation:\s*true/);
+  assert.match(cancel, /argument-hint:\s*"\[job-id\] \[--stream\]"/);
   assert.match(cancel, /gemini-companion\.mjs" cancel \$ARGUMENTS/);
+  assert.match(
+    status,
+    /argument-hint:\s*"\[job-id\] \[--wait\] \[--timeout-ms <ms>\] \[--all\] \[--stream\]"/,
+  );
+  assert.match(
+    setup,
+    /argument-hint:\s*["']\[--enable-review-gate\|--disable-review-gate\] \[--set-model <model>\] \[--stream\]["']/,
+  );
+  assert.match(tail, /disable-model-invocation:\s*true/);
+  assert.match(tail, /gemini-companion\.mjs" tail \$ARGUMENTS/);
+  assert.match(
+    tail,
+    /argument-hint:\s*"\[job-id\] \[--follow\] \[--lines <n>\]"/,
+  );
+  assert.match(tail, /latest active job for the current Claude session/i);
+  assert.match(
+    tail,
+    /continue streaming appended log lines until the job settles/i,
+  );
   assert.match(
     resultHandling,
     /do not turn a failed or incomplete Gemini run into a Claude-side implementation attempt/i,
@@ -355,7 +458,7 @@ test("setup command can offer Gemini install and points users to Gemini auth", (
 
   assert.match(
     setup,
-    /argument-hint:\s*'\[--enable-review-gate\|--disable-review-gate\] \[--set-model <model>\]'/,
+    /argument-hint:\s*["']\[--enable-review-gate\|--disable-review-gate\] \[--set-model <model>\] \[--stream\]["']/,
   );
   assert.match(setup, /AskUserQuestion/);
   assert.match(setup, /npm install -g @google\/gemini-cli/);

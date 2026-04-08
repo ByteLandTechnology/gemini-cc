@@ -1,6 +1,6 @@
 ---
 description: Show the stored final output for a finished Gemini job in this repository
-argument-hint: "[job-id]"
+argument-hint: "[job-id] [--stream]"
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
