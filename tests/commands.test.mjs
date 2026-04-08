@@ -18,7 +18,6 @@ test("review command uses AskUserQuestion and background Bash while staying revi
   assert.match(source, /Do not fix issues/i);
   assert.match(source, /review-only/i);
   assert.match(source, /return Gemini's output verbatim to the user/i);
-  assert.match(source, /```bash/);
   assert.match(source, /```typescript/);
   assert.match(source, /review "\$ARGUMENTS"/);
   assert.match(source, /\[--stream\]/);
@@ -30,6 +29,14 @@ test("review command uses AskUserQuestion and background Bash while staying revi
   );
   assert.match(source, /description:\s*"Gemini review"/);
   assert.match(source, /Do not call `BashOutput`/);
+  assert.match(
+    source,
+    /Use direct command execution syntax, not `Bash`, so foreground `--stream` output is not buffered by the tool layer\./i,
+  );
+  assert.match(
+    source,
+    /!`node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/gemini-companion\.mjs" review "\$ARGUMENTS"`/,
+  );
   assert.match(source, /Return the command stdout verbatim, exactly as-is/i);
   assert.match(source, /git status --short --untracked-files=all/);
   assert.match(source, /git diff --shortstat/);
@@ -81,7 +88,6 @@ test("adversarial review command uses AskUserQuestion and background Bash while 
   assert.match(source, /Do not fix issues/i);
   assert.match(source, /review-only/i);
   assert.match(source, /return Gemini's output verbatim to the user/i);
-  assert.match(source, /```bash/);
   assert.match(source, /```typescript/);
   assert.match(source, /adversarial-review "\$ARGUMENTS"/);
   assert.match(
@@ -95,6 +101,14 @@ test("adversarial review command uses AskUserQuestion and background Bash while 
   );
   assert.match(source, /description:\s*"Gemini adversarial review"/);
   assert.match(source, /Do not call `BashOutput`/);
+  assert.match(
+    source,
+    /Use direct command execution syntax, not `Bash`, so foreground `--stream` output is not buffered by the tool layer\./i,
+  );
+  assert.match(
+    source,
+    /!`node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/gemini-companion\.mjs" adversarial-review "\$ARGUMENTS"`/,
+  );
   assert.match(source, /Return the command stdout verbatim, exactly as-is/i);
   assert.match(source, /git status --short --untracked-files=all/);
   assert.match(source, /git diff --shortstat/);
@@ -193,11 +207,19 @@ test("rescue command absorbs continue semantics", () => {
   );
   assert.match(
     rescue,
-    /If the request includes `--stream`, run the `gemini:rescue` subagent in the foreground\./i,
+    /If the request includes `--stream`, do not route through the `gemini:rescue` subagent\. Run the companion task command directly in the foreground\./i,
   );
   assert.match(
     rescue,
     /If the request includes both `--background` and `--stream`, stop and tell the user to choose one\./i,
+  );
+  assert.match(
+    rescue,
+    /In `--stream` mode, bypass the subagent and use direct command execution syntax so incremental Gemini stdout is not buffered by the subagent or `Bash` tool layer/i,
+  );
+  assert.match(
+    rescue,
+    /!`node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/gemini-companion\.mjs" task "\$ARGUMENTS"`/,
   );
   assert.match(
     rescue,
@@ -218,6 +240,10 @@ test("rescue command absorbs continue semantics", () => {
   assert.match(
     rescue,
     /Return the Gemini companion stdout verbatim to the user/i,
+  );
+  assert.match(
+    rescue,
+    /In `--stream` mode, return that direct command output verbatim and do not route to the subagent\./i,
   );
   assert.match(
     rescue,
@@ -267,19 +293,19 @@ test("rescue command absorbs continue semantics", () => {
   );
   assert.match(
     agent,
-    /Preserve `--stream` when the user explicitly asks for streaming output/i,
+    /Treat `--effort <value>` and `--model <value>` as runtime controls/i,
   );
   assert.match(
     agent,
-    /Treat `--stream`, `--effort <value>`, and `--model <value>` as runtime controls/i,
-  );
-  assert.match(
-    agent,
-    /`--stream` forces foreground execution and conflicts with `--background`\./i,
+    /This subagent is never used for `--stream`; the parent `\/gemini:rescue` command handles `--stream` directly so incremental stdout is not buffered here\./i,
   );
   assert.match(
     agent,
     /Return the stdout of the `gemini-companion` command exactly as-is/i,
+  );
+  assert.match(
+    agent,
+    /Do not try to implement stream mode inside this subagent\. The parent command already bypasses the subagent for `--stream`\./i,
   );
   assert.match(
     agent,
@@ -315,10 +341,6 @@ test("rescue command absorbs continue semantics", () => {
     /Leave `--effort` unset unless the user explicitly requests a specific effort/i,
   );
   assert.match(runtimeSkill, /Leave model unset by default/i);
-  assert.match(
-    runtimeSkill,
-    /Preserve `--stream` when the user explicitly asks for streaming output/i,
-  );
   assert.match(runtimeSkill, /Map `spark` to `--model flash`/i);
   assert.match(
     runtimeSkill,
@@ -326,11 +348,15 @@ test("rescue command absorbs continue semantics", () => {
   );
   assert.match(
     runtimeSkill,
-    /If the forwarded request includes `--stream`, pass it through to `task`/i,
+    /Do not use it for `--stream`; the parent `\/gemini:rescue` command handles streaming directly\./i,
   );
   assert.match(
     runtimeSkill,
-    /`--stream` forces foreground execution and conflicts with `--background`\./i,
+    /This skill is only for non-stream rescue handoffs\. When the user asks for `--stream`, the parent command bypasses the subagent so incremental stdout stays live\./i,
+  );
+  assert.match(
+    runtimeSkill,
+    /The parent command handles `--stream` directly\. Do not try to recreate that path inside this subagent skill\./i,
   );
   assert.match(runtimeSkill, /Strip it before calling `task`/i);
   assert.match(
@@ -378,6 +404,14 @@ test("rescue command absorbs continue semantics", () => {
   assert.match(
     readme,
     /`--stream` forces foreground execution, conflicts with `--background`, and prints raw Gemini text as it arrives/i,
+  );
+  assert.match(
+    readme,
+    /direct command path instead of the buffered tool wrapper/i,
+  );
+  assert.match(
+    readme,
+    /bypasses the `gemini:rescue` subagent, and prints raw Gemini text as it arrives through the direct command path/i,
   );
 });
 

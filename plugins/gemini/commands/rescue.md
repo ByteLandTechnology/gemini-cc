@@ -14,7 +14,7 @@ $ARGUMENTS
 Execution mode:
 
 - If the request includes both `--background` and `--stream`, stop and tell the user to choose one.
-- If the request includes `--stream`, run the `gemini:rescue` subagent in the foreground.
+- If the request includes `--stream`, do not route through the `gemini:rescue` subagent. Run the companion task command directly in the foreground.
 - If the request includes `--background`, run the `gemini:rescue` subagent in the background.
 - If the request includes `--wait`, run the `gemini:rescue` subagent in the foreground.
 - If neither flag is present, default to foreground.
@@ -40,6 +40,10 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" task-resume-candidate 
 
 Operating rules:
 
+- In `--stream` mode, bypass the subagent and use direct command execution syntax so incremental Gemini stdout is not buffered by the subagent or `Bash` tool layer:
+  !`node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" task "$ARGUMENTS"`
+
+- In `--stream` mode, return that direct command output verbatim and do not route to the subagent.
 - The subagent is a thin forwarder only. It should use one `Bash` call to invoke `node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" task ...` and return that command's stdout as-is.
 - Return the Gemini companion stdout verbatim to the user.
 - Do not paraphrase, summarize, rewrite, or add commentary before or after it.

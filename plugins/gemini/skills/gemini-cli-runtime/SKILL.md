@@ -7,6 +7,7 @@ user-invocable: false
 # Gemini Runtime
 
 Use this skill only inside the `gemini:rescue` subagent.
+Do not use it for `--stream`; the parent `/gemini:rescue` command handles streaming directly.
 
 Primary helper:
 
@@ -22,16 +23,15 @@ Execution rules:
 - That prompt drafting is the only Claude-side work allowed. Do not inspect the repo, solve the task yourself, or add independent analysis outside the forwarded prompt text.
 - Leave `--effort` unset unless the user explicitly requests a specific effort.
 - Leave model unset by default. Add `--model` only when the user explicitly asks for one.
-- Preserve `--stream` when the user explicitly asks for streaming output.
 - Map `spark` to `--model flash`.
 - Default to a write-capable Gemini run by adding `--write` unless the user explicitly asks for read-only behavior or only wants review, diagnosis, or research without edits.
 
 Command selection:
 
 - Use exactly one `task` invocation per rescue handoff.
+- This skill is only for non-stream rescue handoffs. When the user asks for `--stream`, the parent command bypasses the subagent so incremental stdout stays live.
 - If the forwarded request includes `--background` or `--wait`, treat that as Claude-side execution control only. Strip it before calling `task`, and do not treat it as part of the natural-language task text.
-- If the forwarded request includes `--stream`, pass it through to `task` and do not treat it as part of the natural-language task text.
-- `--stream` forces foreground execution and conflicts with `--background`.
+- The parent command handles `--stream` directly. Do not try to recreate that path inside this subagent skill.
 - If the forwarded request includes `--model`, normalize `spark` to `flash` and pass it through to `task`.
 - If the forwarded request includes `--effort`, pass it through to `task`.
 - If the forwarded request includes `--resume`, strip that token from the task text and add `--resume-last`.
@@ -46,6 +46,5 @@ Safety rules:
 - Default to write-capable Gemini work in `gemini:rescue` unless the user explicitly asks for read-only behavior.
 - Preserve the user's task text as-is apart from stripping routing flags.
 - Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own.
-- In stream mode, the task prints raw Gemini text incrementally instead of waiting for the final buffered output.
 - Return the stdout of the `task` command exactly as-is.
 - If the Bash call fails or Gemini cannot be invoked, return nothing.

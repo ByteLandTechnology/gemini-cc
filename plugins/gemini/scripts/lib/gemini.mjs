@@ -330,27 +330,125 @@ function extractEventType(event) {
     .toLowerCase();
 }
 
-function extractAssistantText(event) {
-  return String(
-    event?.text ??
-      event?.content ??
-      event?.message ??
-      event?.delta ??
-      event?.payload?.text ??
-      event?.payload?.content ??
-      "",
+function collectTextFragments(value, seen = new Set()) {
+  if (value == null) {
+    return [];
+  }
+
+  if (typeof value === "string") {
+    return value ? [value] : [];
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => collectTextFragments(entry, seen));
+  }
+
+  if (typeof value !== "object") {
+    return [];
+  }
+
+  if (seen.has(value)) {
+    return [];
+  }
+  seen.add(value);
+
+  const fragments = [];
+  const preferredKeys = [
+    "text",
+    "delta",
+    "content",
+    "message",
+    "response",
+    "output_text",
+    "outputText",
+    "output",
+    "parts",
+    "part",
+    "candidates",
+    "candidate",
+    "contentParts",
+    "items",
+    "payload",
+    "result",
+    "data",
+  ];
+
+  for (const key of preferredKeys) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      continue;
+    }
+    fragments.push(...collectTextFragments(value[key], seen));
+  }
+
+  if (fragments.length > 0) {
+    return fragments;
+  }
+
+  return Object.values(value).flatMap((entry) =>
+    collectTextFragments(entry, seen),
   );
 }
 
+function extractAssistantText(event) {
+  return collectTextFragments(
+    event?.text ??
+      event?.delta ??
+      event?.content ??
+      event?.message ??
+      event?.payload?.text ??
+      event?.payload?.delta ??
+      event?.payload?.content ??
+      event?.payload?.message ??
+      event?.candidates ??
+      "",
+  ).join("");
+}
+
 function extractResultText(event) {
-  return String(
+  return collectTextFragments(
     event?.response ??
       event?.result?.response ??
+      event?.result ??
       event?.message ??
       event?.payload?.response ??
       event?.payload?.text ??
+      event?.payload?.content ??
+      event?.payload?.message ??
       "",
-  );
+  ).join("");
+}
+
+function isAssistantStreamEvent(type, event) {
+  if (type === "message") {
+    const role = String(event.role ?? "assistant")
+      .trim()
+      .toLowerCase();
+    return role === "" || role === "assistant" || role === "model";
+  }
+
+  if (
+    ![
+      "assistant",
+      "assistant_message",
+      "content",
+      "content_delta",
+      "delta",
+      "output_text",
+      "response_chunk",
+      "chunk",
+    ].includes(type)
+  ) {
+    return false;
+  }
+
+  const role = String(event.role ?? event.author ?? "")
+    .trim()
+    .toLowerCase();
+  return role !== "user" && role !== "system" && role !== "tool";
 }
 
 function buildReviewPrompt(context) {
@@ -571,13 +669,7 @@ async function runGeminiCli(cwd, options = {}) {
         return;
       }
 
-      if (type === "message") {
-        const role = String(event.role ?? "assistant")
-          .trim()
-          .toLowerCase();
-        if (role !== "assistant") {
-          return;
-        }
+      if (isAssistantStreamEvent(type, event)) {
         const text = extractAssistantText(event);
         if (!text) {
           return;

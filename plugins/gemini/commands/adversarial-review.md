@@ -54,11 +54,9 @@ Argument handling:
 
 Foreground flow:
 
+- Use direct command execution syntax, not `Bash`, so foreground `--stream` output is not buffered by the tool layer.
 - Run:
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" adversarial-review "$ARGUMENTS"
-```
+  !`node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" adversarial-review "$ARGUMENTS"`
 
 - Return the command stdout verbatim, exactly as-is.
 - Do not paraphrase, summarize, or add commentary before or after it.

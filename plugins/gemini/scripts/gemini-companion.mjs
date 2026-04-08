@@ -97,7 +97,7 @@ function printUsage() {
       "  node scripts/gemini-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--set-model <model>] [--stream] [--json]",
       "  node scripts/gemini-companion.mjs review [--wait|--background] [--stream] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/gemini-companion.mjs adversarial-review [--wait|--background] [--stream] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
-      "  node scripts/gemini-companion.mjs task [--background] [--stream] [--write] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
+      "  node scripts/gemini-companion.mjs task [--background] [--wait] [--stream] [--write] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
       "  node scripts/gemini-companion.mjs status [job-id] [--all] [--stream] [--json]",
       "  node scripts/gemini-companion.mjs result [job-id] [--stream] [--json]",
       "  node scripts/gemini-companion.mjs cancel [job-id] [--stream] [--json]",
@@ -1001,6 +1001,7 @@ async function handleTask(argv) {
       "resume",
       "fresh",
       "background",
+      "wait",
       "stream",
     ],
     aliasMap: {

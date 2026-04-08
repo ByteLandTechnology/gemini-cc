@@ -567,6 +567,61 @@ test("task --stream emits raw task output before the process exits", async () =>
   assert.ok(result.closedAt - result.firstStdoutAt >= 50);
 });
 
+test("task --stream extracts nested Gemini content parts before the process exits", async () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeGemini(binDir, "nested-stream");
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+
+  const result = await runStreaming(
+    "node",
+    [SCRIPT, "task", "--stream", "fix the failing test"],
+    {
+      cwd: repo,
+      env: buildEnv(binDir),
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    result.stdout,
+    "Handled the requested task.\nTask prompt accepted.\n",
+  );
+  assert.ok(result.firstStdoutAt != null);
+  assert.ok(result.closedAt - result.firstStdoutAt >= 50);
+});
+
+test("task ignores forwarded --wait when rescue stream mode calls it directly", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  const statePath = path.join(binDir, "fake-gemini-state.json");
+  installFakeGemini(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+
+  const result = run(
+    "node",
+    [SCRIPT, "task", "--wait", "--stream", "fix the failing test"],
+    {
+      cwd: repo,
+      env: buildEnv(binDir),
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    result.stdout,
+    "Handled the requested task.\nTask prompt accepted.\n",
+  );
+  const fakeState = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  assert.equal(fakeState.lastInvocation.prompt, "fix the failing test");
+});
+
 test("review rejects --background together with --stream", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();

@@ -19,6 +19,7 @@ Selection guidance:
 Forwarding rules:
 
 - Use exactly one `Bash` call to invoke `node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" task ...`.
+- This subagent is never used for `--stream`; the parent `/gemini:rescue` command handles `--stream` directly so incremental stdout is not buffered here.
 - If the user did not explicitly choose `--background` or `--wait`, prefer foreground for a small, clearly bounded rescue request.
 - If the user did not explicitly choose `--background` or `--wait` and the task looks complicated, open-ended, multi-step, or likely to keep Gemini running for a long time, prefer background execution.
 - You may use the `gemini-prompting` skill only to tighten the user's request into a better Gemini prompt before forwarding it.
@@ -27,11 +28,9 @@ Forwarding rules:
 - Do not call `review`, `adversarial-review`, `status`, `result`, or `cancel`. This subagent only forwards to `task`.
 - Leave `--effort` unset unless the user explicitly requests a specific reasoning effort.
 - Leave model unset by default. Only add `--model` when the user explicitly asks for a specific model.
-- Preserve `--stream` when the user explicitly asks for streaming output.
 - If the user asks for `spark`, map that to `--model flash`.
 - If the user asks for a concrete Gemini model name, pass it through with `--model`.
-- Treat `--stream`, `--effort <value>`, and `--model <value>` as runtime controls and do not include them in the task text you pass through.
-- `--stream` forces foreground execution and conflicts with `--background`.
+- Treat `--effort <value>` and `--model <value>` as runtime controls and do not include them in the task text you pass through.
 - Default to a write-capable Gemini run by adding `--write` unless the user explicitly asks for read-only behavior or only wants review, diagnosis, or research without edits.
 - Treat `--resume` and `--fresh` as routing controls and do not include them in the task text you pass through.
 - `--resume` means add `--resume-last`.
@@ -40,7 +39,7 @@ Forwarding rules:
 - Otherwise forward the task as a fresh `task` run.
 - Preserve the user's task text as-is apart from stripping routing flags.
 - Return the stdout of the `gemini-companion` command exactly as-is.
-- In stream mode, the task prints raw Gemini text incrementally instead of waiting for the final buffered output.
+- Do not try to implement stream mode inside this subagent. The parent command already bypasses the subagent for `--stream`.
 - If the Bash call fails or Gemini cannot be invoked, return nothing.
 
 Response style:

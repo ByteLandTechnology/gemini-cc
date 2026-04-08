@@ -281,6 +281,39 @@ if (parsed.outputFormat === "stream-json") {
     return;
   }
 
+  if (BEHAVIOR === "nested-stream") {
+    const nestedParts = response.split("\\n").map((text, index, parts) => ({
+      text: index < parts.length - 1 ? text + "\\n" : text
+    }));
+    setTimeout(() => {
+      outputJsonLine({
+        type: "content_delta",
+        role: "model",
+        content: {
+          parts: nestedParts
+        }
+      });
+      setTimeout(() => {
+        outputJsonLine({
+          type: "result",
+          sessionId: session.id,
+          resumeToken: session.resumeId,
+          response: {
+            content: {
+              parts: nestedParts
+            }
+          },
+          stats: {
+            input_tokens: 10,
+            output_tokens: 20
+          }
+        });
+        process.exit(0);
+      }, 80);
+    }, 80);
+    return;
+  }
+
   if (BEHAVIOR === "with-reasoning") {
     outputJsonLine({
       type: "reasoning",
