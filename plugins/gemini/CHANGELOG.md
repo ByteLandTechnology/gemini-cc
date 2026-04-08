@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.0
+
+### Features
+
+- Automate version bumps and GitHub releases
+- Add streaming output and tail command
+- Add model selection menu with persisted default model
+- Initial commit for gemini-cc
+
+### Fixes
+
+- Stream slash-command output live
+
 ## 1.0.0
 
 - Add the missing repository-level marketplace manifest so the repo validates as a Claude Code marketplace source.
