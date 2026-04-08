@@ -90,11 +90,20 @@ npm run release:full
 
 `npm run verify` is the main maintainer preflight command and runs the test suite, the repository type-check, and release metadata validation.
 `npm run check` is kept as an alias for `npm run verify`.
+`npm run release:auto -- --json` previews the next automatic release by looking at Conventional Commits since the latest `v*` tag.
 `npm run validate:claude` runs Claude's local marketplace validator against the repository root when Claude Code is installed locally.
 `npm run release:full` runs the full local release preflight: verify, Claude validation, and release bundle staging.
 `npm run build` type-checks the shipped runtime scripts and the checked-in release tooling. Running `/gemini:*` commands still requires a working Gemini CLI install and authentication state.
 `npm run release:bundle` writes the staged marketplace bundle to `dist/release/gemini-cc-v<version>/`, plus a tarball, SHA-256 checksum, release notes, and a release manifest in `dist/release/`.
 The release checklist is documented in [`RELEASE.md`](./RELEASE.md).
+
+Release automation:
+
+- Pull requests run `npm run verify`.
+- Pushes to `main` inspect Conventional Commits since the latest `v*` tag.
+- `feat:` bumps the next release minor, `fix:` bumps patch, and any `BREAKING CHANGE` or `type!:` bumps major.
+- When a release is needed, CI updates the checked-in version files plus `plugins/gemini/CHANGELOG.md`, commits `chore(release): v<version>`, tags `v<version>`, and pushes both back to GitHub.
+- The resulting `v*` tag run rebuilds the bundle and publishes the GitHub Release assets.
 
 ## Usage
 

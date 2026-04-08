@@ -25,6 +25,11 @@ export const ROOT_NOTICE_PATH = path.join(REPO_ROOT, "NOTICE");
 export const PLUGIN_NOTICE_PATH = path.join(PLUGIN_DIR, "NOTICE");
 export const GITIGNORE_PATH = path.join(REPO_ROOT, ".gitignore");
 export const DIST_DIR = path.join(REPO_ROOT, "dist", "release");
+export const RELEASE_COMMIT_PREFIX = "chore(release): v";
+
+const SEMVER_PATTERN = /^([0-9]+)\.([0-9]+)\.([0-9]+)$/;
+const CONVENTIONAL_HEADER_PATTERN =
+  /^(?<type>[a-z]+)(?:\((?<scope>[^)]+)\))?(?<breaking>!)?:\s+(?<description>.+)$/i;
 
 function readText(filePath) {
   return fs.readFileSync(filePath, "utf8");
@@ -32,6 +37,22 @@ function readText(filePath) {
 
 function readJson(filePath) {
   return JSON.parse(readText(filePath));
+}
+
+function writeText(filePath, content) {
+  fs.writeFileSync(filePath, content, "utf8");
+}
+
+function writeJson(filePath, value) {
+  writeText(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function runGit(root, args) {
+  return execFileSync("git", args, {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
 }
 
 export function getTopChangelogVersion(changelogText) {
@@ -68,6 +89,410 @@ export function validateReleaseTag(version, tag) {
 export function resolveBundleDirName(version) {
   return `gemini-cc-v${version}`;
 }
+
+export function parseSemver(version) {
+  const match = String(version ?? "")
+    .trim()
+    .match(SEMVER_PATTERN);
+  if (!match) {
+    throw new Error(`Invalid semantic version: ${version}`);
+  }
+
+  return {
+    major: Number.parseInt(match[1], 10),
+    minor: Number.parseInt(match[2], 10),
+    patch: Number.parseInt(match[3], 10),
+  };
+}
+
+export function bumpVersion(version, bump) {
+  const parsed = parseSemver(version);
+  if (bump === "major") {
+    return `${parsed.major + 1}.0.0`;
+  }
+  if (bump === "minor") {
+    return `${parsed.major}.${parsed.minor + 1}.0`;
+  }
+  if (bump === "patch") {
+    return `${parsed.major}.${parsed.minor}.${parsed.patch + 1}`;
+  }
+  if (bump === "none" || bump == null) {
+    return `${parsed.major}.${parsed.minor}.${parsed.patch}`;
+  }
+  throw new Error(`Unsupported release bump: ${bump}`);
+}
+
+function bumpPriority(bump) {
+  if (bump === "major") {
+    return 3;
+  }
+  if (bump === "minor") {
+    return 2;
+  }
+  if (bump === "patch") {
+    return 1;
+  }
+  return 0;
+}
+
+export function isReleaseCommit(message) {
+  return String(message ?? "")
+    .trim()
+    .toLowerCase()
+    .startsWith(RELEASE_COMMIT_PREFIX);
+}
+
+export function isAutomatedReleaseCommit(message) {
+  return /^chore\(release\): v\d+\.\d+\.\d+$/i.test(String(message ?? "").trim());
+}
+
+export function parseConventionalCommit(subject, body = "") {
+  const normalizedSubject = String(subject ?? "").trim();
+  const normalizedBody = String(body ?? "").trim();
+
+  if (!normalizedSubject || isReleaseCommit(normalizedSubject)) {
+    return {
+      type: null,
+      scope: null,
+      summary: normalizedSubject,
+      breaking: false,
+      bump: "none",
+      releasable: false,
+      section: null,
+    };
+  }
+
+  const match = normalizedSubject.match(CONVENTIONAL_HEADER_PATTERN);
+  const breakingInBody = /(^|\n)BREAKING[ -]CHANGES?:/im.test(normalizedBody);
+
+  if (!match) {
+    return {
+      type: null,
+      scope: null,
+      summary: normalizedSubject,
+      breaking: breakingInBody,
+      bump: breakingInBody ? "major" : "none",
+      releasable: breakingInBody,
+      section: breakingInBody ? "Breaking Changes" : null,
+    };
+  }
+
+  const type = match.groups.type.toLowerCase();
+  const scope = match.groups.scope ?? null;
+  const summary = match.groups.description.trim();
+  const breaking = Boolean(match.groups.breaking) || breakingInBody;
+
+  if (breaking) {
+    return {
+      type,
+      scope,
+      summary,
+      breaking: true,
+      bump: "major",
+      releasable: true,
+      section: "Breaking Changes",
+    };
+  }
+
+  if (type === "feat") {
+    return {
+      type,
+      scope,
+      summary,
+      breaking: false,
+      bump: "minor",
+      releasable: true,
+      section: "Features",
+    };
+  }
+
+  if (type === "fix") {
+    return {
+      type,
+      scope,
+      summary,
+      breaking: false,
+      bump: "patch",
+      releasable: true,
+      section: "Fixes",
+    };
+  }
+
+  return {
+    type,
+    scope,
+    summary,
+    breaking: false,
+    bump: "none",
+    releasable: false,
+    section: null,
+  };
+}
+
+export function resolveReleaseBump(commits) {
+  let selected = "none";
+  for (const commit of commits) {
+    const bump =
+      typeof commit === "string"
+        ? commit
+        : (commit?.parsed?.bump ?? commit?.bump ?? "none");
+    if (bumpPriority(bump) > bumpPriority(selected)) {
+      selected = bump;
+    }
+  }
+  return selected;
+}
+
+export const determineReleaseBump = resolveReleaseBump;
+
+function normalizeChangelogSentence(text) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
+function groupReleaseCommits(commits) {
+  const groups = {
+    "Breaking Changes": [],
+    Features: [],
+    Fixes: [],
+  };
+
+  for (const commit of commits) {
+    const parsed = commit?.parsed ?? commit;
+    if (!parsed?.section || !(parsed.section in groups)) {
+      continue;
+    }
+    const summary = normalizeChangelogSentence(parsed.summary);
+    if (summary) {
+      groups[parsed.section].push(`- ${summary}`);
+    }
+  }
+
+  return groups;
+}
+
+export function buildGeneratedChangelogEntry(version, commits) {
+  const groups = groupReleaseCommits(commits);
+  const lines = [`## ${version}`];
+
+  for (const [title, entries] of Object.entries(groups)) {
+    if (entries.length === 0) {
+      continue;
+    }
+    lines.push("", `### ${title}`, "", entries.join("\n"));
+  }
+
+  return lines.join("\n").trim();
+}
+
+export const buildChangelogEntry = buildGeneratedChangelogEntry;
+
+function stripChangelogHeader(changelogText) {
+  return String(changelogText ?? "")
+    .replace(/^#\s+Changelog\s*/i, "")
+    .trim();
+}
+
+function removeChangelogEntry(changelogText, version) {
+  const source = stripChangelogHeader(changelogText);
+  const marker = `## ${version}`;
+  const start = source.indexOf(marker);
+  if (start === -1) {
+    return source;
+  }
+
+  const rest = source.slice(start + marker.length);
+  const nextHeader = rest.search(/\n##\s+/);
+  const prefix = source.slice(0, start).trim();
+  const suffix = (nextHeader === -1 ? "" : rest.slice(nextHeader)).trim();
+  return [prefix, suffix].filter(Boolean).join("\n\n").trim();
+}
+
+export function prependChangelogEntry(changelogText, entry) {
+  const version = getTopChangelogVersion(entry);
+  if (!version) {
+    throw new Error(
+      "Generated changelog entry is missing a semantic version heading.",
+    );
+  }
+
+  const body = removeChangelogEntry(changelogText, version);
+  return [`# Changelog`, "", entry.trim(), body ? `\n${body}` : ""]
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimEnd()
+    .concat("\n");
+}
+
+export function getLatestReleaseTag(root = REPO_ROOT) {
+  try {
+    const output = runGit(root, [
+      "tag",
+      "--list",
+      "v*",
+      "--sort=-version:refname",
+    ]);
+    const [firstTag] = output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    return firstTag ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function listCommitsSinceRef(root = REPO_ROOT, sinceRef = null) {
+  const range = sinceRef ? `${sinceRef}..HEAD` : "HEAD";
+  const raw = runGit(root, ["log", "--format=%H%x1f%s%x1f%b%x1e", range]);
+  if (!raw) {
+    return [];
+  }
+
+  return raw
+    .split("\x1e")
+    .map((record) => record.trim())
+    .filter(Boolean)
+    .map((record) => {
+      const [hash, subject, body = ""] = record.split("\x1f");
+      return {
+        hash: hash?.trim() ?? "",
+        subject: subject?.trim() ?? "",
+        body: body?.trim() ?? "",
+      };
+    });
+}
+
+export function collectReleaseCommits(root = REPO_ROOT, sinceRef = null) {
+  return listCommitsSinceRef(root, sinceRef)
+    .map((commit) => ({
+      ...commit,
+      parsed: parseConventionalCommit(commit.subject, commit.body),
+    }))
+    .filter(
+      (commit) =>
+        commit.subject &&
+        !isAutomatedReleaseCommit(commit.subject) &&
+        commit.parsed.releasable,
+    );
+}
+
+function writeReleaseVersionFiles(root, version) {
+  const packageJsonPath = path.join(root, "package.json");
+  const pluginManifestPath = path.join(
+    root,
+    "plugins",
+    "gemini",
+    ".claude-plugin",
+    "plugin.json",
+  );
+  const marketplacePath = path.join(root, ".claude-plugin", "marketplace.json");
+
+  const packageJson = readJson(packageJsonPath);
+  const pluginJson = readJson(pluginManifestPath);
+  const marketplaceJson = readJson(marketplacePath);
+  const pluginEntry = Array.isArray(marketplaceJson.plugins)
+    ? marketplaceJson.plugins.find((entry) => entry?.name === pluginJson.name)
+    : null;
+
+  if (!pluginEntry) {
+    throw new Error(
+      `.claude-plugin/marketplace.json is missing the ${pluginJson.name} plugin entry.`,
+    );
+  }
+
+  packageJson.version = version;
+  pluginJson.version = version;
+  marketplaceJson.metadata = {
+    ...(marketplaceJson.metadata ?? {}),
+    version,
+  };
+  pluginEntry.version = version;
+
+  writeJson(packageJsonPath, packageJson);
+  writeJson(pluginManifestPath, pluginJson);
+  writeJson(marketplacePath, marketplaceJson);
+
+  return [packageJsonPath, pluginManifestPath, marketplacePath];
+}
+
+export function writeReleaseVersion(
+  root = REPO_ROOT,
+  version,
+  changelogEntry = null,
+) {
+  const updatedFiles = writeReleaseVersionFiles(root, version);
+  if (changelogEntry) {
+    const changelogPath = path.join(root, "plugins", "gemini", "CHANGELOG.md");
+    writeText(
+      changelogPath,
+      prependChangelogEntry(readText(changelogPath), changelogEntry),
+    );
+    updatedFiles.push(changelogPath);
+  }
+  return updatedFiles;
+}
+
+export function prepareAutomaticRelease(root = REPO_ROOT, options = {}) {
+  const { issues, version: currentVersion } = collectReleaseIssues(root);
+  if (issues.length > 0) {
+    throw new Error(`Release validation failed:\n- ${issues.join("\n- ")}`);
+  }
+
+  const latestTag = options.latestTag ?? getLatestReleaseTag(root);
+  const commits = collectReleaseCommits(root, latestTag);
+  const bump = resolveReleaseBump(commits);
+
+  if (bump === "none") {
+    return {
+      releaseNeeded: false,
+      currentVersion,
+      nextVersion: null,
+      bump,
+      latestTag,
+      commits: [],
+      tagName: null,
+      releaseCommitMessage: null,
+      commitMessage: null,
+      changelogEntry: null,
+      updatedFiles: [],
+    };
+  }
+
+  const nextVersion = bumpVersion(currentVersion, bump);
+  const changelogEntry = buildGeneratedChangelogEntry(nextVersion, commits);
+  const updatedFiles = options.write
+    ? writeReleaseVersion(root, nextVersion, changelogEntry)
+    : [];
+
+  return {
+    releaseNeeded: true,
+    currentVersion,
+    nextVersion,
+    bump,
+    latestTag,
+    commits: commits.map((commit) => ({
+      hash: commit.hash,
+      subject: commit.subject,
+      type: commit.parsed.type,
+      scope: commit.parsed.scope,
+      summary: commit.parsed.summary,
+      breaking: commit.parsed.breaking,
+      bump: commit.parsed.bump,
+      section: commit.parsed.section,
+    })),
+    tagName: `v${nextVersion}`,
+    releaseCommitMessage: `chore(release): v${nextVersion}`,
+    commitMessage: `chore(release): v${nextVersion}`,
+    changelogEntry,
+    updatedFiles,
+  };
+}
+
+export const prepareRelease = prepareAutomaticRelease;
 
 export function getBundleEntries(root = REPO_ROOT) {
   return [

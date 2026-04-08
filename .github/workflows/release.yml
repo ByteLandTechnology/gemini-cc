@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - "main"
     tags:
       - "v*"
   workflow_dispatch:
@@ -9,9 +11,75 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  release:
-    name: Release
+  prepare-release:
+    name: Prepare Release
+    if: |
+      !startsWith(github.ref, 'refs/tags/') &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      (github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore(release): v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Plan release
+        id: plan
+        run: |
+          node scripts/release-auto.mjs --write --json > release-plan.json
+          node <<'NODE'
+          const fs = require('node:fs');
+          const plan = JSON.parse(fs.readFileSync('release-plan.json', 'utf8'));
+          const output = process.env.GITHUB_OUTPUT;
+          fs.appendFileSync(output, `release_needed=${plan.releaseNeeded}\n`);
+          fs.appendFileSync(output, `version=${plan.nextVersion ?? ''}\n`);
+          fs.appendFileSync(output, `tag_name=${plan.tagName ?? ''}\n`);
+          fs.appendFileSync(output, `commit_message=${plan.releaseCommitMessage ?? ''}\n`);
+          NODE
+
+      - name: Stop when no release is needed
+        if: steps.plan.outputs.release_needed != 'true'
+        run: echo "No releasable Conventional Commits were found on the default branch."
+
+      - name: Run repository checks
+        if: steps.plan.outputs.release_needed == 'true'
+        run: npm run verify
+
+      - name: Commit version files and changelog
+        if: steps.plan.outputs.release_needed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json .claude-plugin/marketplace.json plugins/gemini/.claude-plugin/plugin.json plugins/gemini/CHANGELOG.md
+          git commit -m "${{ steps.plan.outputs.commit_message }}"
+          git tag "${{ steps.plan.outputs.tag_name }}"
+
+      - name: Push release commit and tag
+        if: steps.plan.outputs.release_needed == 'true'
+        run: |
+          git push origin "HEAD:${{ github.event.repository.default_branch }}"
+          git push origin "${{ steps.plan.outputs.tag_name }}"
+
+  publish-release:
+    name: Publish Release
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -58,7 +126,6 @@ jobs:
             dist/release/gemini-cc-v${{ steps.version.outputs.value }}.manifest.json
 
       - name: Publish GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

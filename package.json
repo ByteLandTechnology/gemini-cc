@@ -23,6 +23,7 @@
     "check": "npm run verify",
     "validate:claude": "claude plugin validate .",
     "release:check": "node scripts/release-check.mjs",
+    "release:auto": "node scripts/release-auto.mjs",
     "release:bundle": "node scripts/release-bundle.mjs",
     "release:full": "npm run verify && npm run validate:claude && npm run release:bundle"
   },
